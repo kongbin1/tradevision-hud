@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+*.spec
+
+# 로컬 설정·비밀 (API 키는 %LOCALAPPDATA%\TradeVisionHUD\config.json 에만 저장됨)
+.env
+config.json
+*.log
+
+# OS / 편집기
+Thumbs.db
+Desktop.ini
+.DS_Store

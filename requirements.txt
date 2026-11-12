@@ -1,0 +1,11 @@
+PyQt6>=6.6
+google-genai>=1.0
+pydantic>=2.5
+# Windows 내장 OCR(가격축 읽기 → 줌/스크롤 추적)
+winrt-runtime
+winrt-Windows.Foundation
+winrt-Windows.Foundation.Collections
+winrt-Windows.Globalization
+winrt-Windows.Graphics.Imaging
+winrt-Windows.Media.Ocr
+winrt-Windows.Storage.Streams
