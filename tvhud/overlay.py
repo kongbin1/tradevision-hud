@@ -268,7 +268,8 @@ class Overlay(QWidget):
             if self.mode == "busy":
                 blocks.append((f"재분석 중… {self._busy_secs()}초  {self.message}", body_font, C_WARN))
             elif self.stale:
-                msg = "⚠ 가격축을 읽을 수 없음 → 재분석 필요" if plan.axis_source == "OCR" else "⚠ 차트 변경 감지 → 재분석 필요"
+                msg = ("⚠ 가격축을 읽을 수 없음(영역이 축을 자르는지 확인) → 재분석 필요" if plan.axis_source == "OCR"
+                       else "⚠ 차트 변경 감지(가격축 자동 맞춤 꺼짐) → 영역 확인 후 재분석")
                 blocks.append((msg, body_font, C_WARN))
             elif self._too_old(plan):
                 blocks.append(("⚠ 오래된 분석 → 재분석 필요", body_font, C_WARN))

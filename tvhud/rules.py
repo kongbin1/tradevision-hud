@@ -58,6 +58,18 @@ class AxisFit:
         x = math.log(price) if self.mode == "log" else price
         return (self.a * x + self.b) / 1000.0
 
+    def price_at(self, ratio: float) -> float | None:
+        """화면 높이 비율(0.0=위, 1.0=아래) → 가격. y_ratio 의 역함수."""
+        if self.a == 0:
+            return None
+        x = (ratio * 1000 - self.b) / self.a
+        if self.mode == "log":
+            try:
+                return math.exp(x)
+            except OverflowError:
+                return None
+        return x
+
     @property
     def quality(self) -> str:
         if self.n < 3:

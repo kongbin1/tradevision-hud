@@ -12,8 +12,9 @@ class _ScreenVeil(QWidget):
     picked = pyqtSignal(QRect)
     cancelled = pyqtSignal()
 
-    def __init__(self, screen):
+    def __init__(self, screen, message: str = ""):
         super().__init__()
+        self.message = message
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool
         )
@@ -47,8 +48,18 @@ class _ScreenVeil(QWidget):
         p.drawText(
             self.rect().adjusted(0, 40, 0, 0),
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-            "차트 영역을 드래그하세요  (우측 가격축 포함 · 취소: Esc 또는 우클릭)",
+            "차트 영역을 드래그하세요  (오른쪽 가격축 숫자가 끝까지 보이게 · 취소: Esc 또는 우클릭)",
         )
+        if self.message:
+            small = QFont("Malgun Gothic", 12)
+            small.setBold(True)
+            p.setFont(small)
+            p.setPen(QColor("#FBBF24"))
+            p.drawText(
+                self.rect().adjusted(40, 80, -40, 0),
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
+                self.message,
+            )
         p.end()
 
     def mousePressEvent(self, event) -> None:
@@ -92,11 +103,11 @@ class RoiSelector(QObject):
     def active(self) -> bool:
         return bool(self._veils)
 
-    def start(self) -> None:
+    def start(self, message: str = "") -> None:
         if self._veils:
             return
         for screen in QGuiApplication.screens():
-            veil = _ScreenVeil(screen)
+            veil = _ScreenVeil(screen, message)
             veil.picked.connect(self._on_picked)
             veil.cancelled.connect(self._on_cancelled)
             veil.show()

@@ -134,29 +134,55 @@ def _read_at(img: QImage, scale: int) -> list[Word]:
     return words
 
 
-def _column(words: list[Word], width: float) -> list[Word]:
-    """오른쪽 정렬된 숫자 열(가격축) 하나를 고른다."""
-    best: list[Word] = []
-    for anchor in words:
-        col = [w for w in words if abs(w.x1 - anchor.x1) <= max(8.0, width * 0.012)]
-        if len(col) > len(best) or (len(col) == len(best) and col and anchor.x1 > best[0].x1):
-            best = col
-    # 같은 높이에 두 개 이상이면 하나만
+def _decreasing_run(col: list[Word]) -> list[Word]:
+    """위→아래로 값이 계속 작아지는 가장 긴 연속 구간(= 가격축).
+
+    아래쪽 거래량 패널 눈금처럼 값이 다시 커지는 지점에서 끊는다.
+    """
     seen: dict[int, Word] = {}
-    for w in sorted(best, key=lambda w: w.yc):
+    for w in sorted(col, key=lambda w: w.yc):      # 같은 높이 중복 제거
         seen.setdefault(int(w.yc // 4), w)
-    return list(seen.values())
+    ordered = list(seen.values())
+    best: list[Word] = []
+    run: list[Word] = []
+    for w in ordered:
+        if run and w.value >= run[-1].value:
+            run = []
+        run.append(w)
+        if len(run) > len(best):
+            best = list(run)
+    return best
+
+
+def _column(words: list[Word], width: float) -> list[Word]:
+    """오른쪽 정렬된 숫자 열 중 가격축으로 보이는 것을 고른다(가장 긴 감소 구간, 같으면 더 오른쪽)."""
+    tol = max(8.0, width * 0.012)
+    best: list[Word] = []
+    best_x = -1.0
+    for anchor in words:
+        run = _decreasing_run([w for w in words if abs(w.x1 - anchor.x1) <= tol])
+        if len(run) > len(best) or (len(run) == len(best) and anchor.x1 > best_x):
+            best, best_x = run, anchor.x1
+    return best
+
+
+def _fit_words(words: list[Word], width: float, height: int) -> AxisFit | None:
+    col = _column(words, width)
+    ticks = [{"price": c.value, "y": c.yc / height * 1000} for c in col]
+    axis = fit_axis(ticks)
+    if axis is None or axis.n < 3 or axis.rms > 8:
+        return None
+    return axis
 
 
 @dataclass
 class AxisTracker:
     """분석 직후 가격축 열의 위치를 찾아 두고, 이후 그 띠만 OCR 해서 축을 다시 맞춘다."""
     strip: QRect            # ROI 이미지 안의 가격축 띠
-    ref_price: float        # 가격 크기 검증용(현재가 등)
 
     @staticmethod
-    def locate(img: QImage, ref_price: float) -> "AxisTracker | None":
-        if not available():
+    def locate(img: QImage) -> "AxisTracker | None":
+        if not available() or img.isNull():
             return None
         w, h = img.width(), img.height()
         right = QRect(int(w * 0.6), 0, w - int(w * 0.6), h)
@@ -164,14 +190,12 @@ class AxisTracker:
             Word(x.value, x.x0 + right.x(), x.x1 + right.x(), x.yc)
             for x in read_words(img.copy(right))
         ]
-        if ref_price > 0:
-            words = [x for x in words if ref_price / 3 <= x.value <= ref_price * 3]
         col = _column(words, w)
-        if len(col) < 3:
+        if len(col) < 3 or _fit_words(col, w, h) is None:
             return None
         x0 = max(0, int(min(c.x0 for c in col)) - 12)
         x1 = min(w, int(max(c.x1 for c in col)) + 12)
-        return AxisTracker(QRect(x0, 0, x1 - x0, h), ref_price)
+        return AxisTracker(QRect(x0, 0, x1 - x0, h))
 
     def fit(self, img: QImage) -> AxisFit | None:
         """현재 화면의 가격축을 읽어 가격→y 대응식을 만든다. 확신이 없으면 None."""
@@ -180,13 +204,4 @@ class AxisTracker:
         strip = self.strip.intersected(QRect(0, 0, img.width(), img.height()))
         if strip.width() < 10:
             return None
-        words = read_words(img.copy(strip))
-        if self.ref_price > 0:
-            words = [x for x in words if self.ref_price / 4 <= x.value <= self.ref_price * 4]
-        col = _column([Word(x.value, x.x0, x.x1, x.yc) for x in words], strip.width())
-        h = img.height()
-        ticks = [{"price": c.value, "y": c.yc / h * 1000} for c in col]
-        axis = fit_axis(ticks)
-        if axis is None or axis.n < 3 or axis.rms > 8:
-            return None
-        return axis
+        return _fit_words(read_words(img.copy(strip)), strip.width(), img.height())

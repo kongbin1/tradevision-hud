@@ -114,6 +114,8 @@ class Controller(QObject):
         self.baseline: bytes | None = None      # 마지막으로 선 위치를 맞춘 화면의 지문
         self._pending: tuple[bytes, bytes, QImage] | None = None  # (지문, png, 원본 이미지)
         self.tracker: axis_ocr.AxisTracker | None = None  # 줌/스크롤 시 가격축 재인식
+        self._resume_analyze = False          # 영역을 다시 지정하면 이어서 분석
+        self._axis_skip_roi: QRect | None = None  # 경고를 무시하고 그대로 쓰기로 한 영역
         self.auto_on = False
 
         self.watch_timer = QTimer(self)
@@ -254,27 +256,56 @@ class Controller(QObject):
         self.overlay.update()
 
     # -- 영역 지정 ------------------------------------------------------------ #
-    def select_roi(self) -> None:
+    def select_roi(self, message: str = "") -> None:
         if self.selector.active or self._busy():
             return
         self.overlay.hide()
-        self.selector.start()
+        self.selector.start(message)
 
     def _on_roi_selected(self, rect: QRect) -> None:
         self.roi = rect
         self.cfg["roi"] = [rect.x(), rect.y(), rect.width(), rect.height()]
         config.save(self.cfg)
         self.baseline = None
+        self._axis_skip_roi = None
         self.overlay.clear_plan()
         self.overlay.place(rect)
         self.overlay.set_state("idle", "영역 지정 완료. " + self._idle_message())
         self.overlay.show()
+        # 선택 화면(어두운 막)이 완전히 사라진 뒤 새 영역에 가격축이 보이는지 확인
+        QTimer.singleShot(250, self._verify_roi_axis)
+
+    def _verify_roi_axis(self) -> None:
+        if self.roi is None or self.selector.active:
+            return
+        img = self._capture()
+        if img is not None and not self._axis_visible(img):
+            self.select_roi(self._AXIS_HELP + "\n(이 영역을 그대로 쓰려면 Esc)")
+            return
+        if self._resume_analyze:
+            self._resume_analyze = False
+            self.analyze("manual")
 
     def _on_roi_cancelled(self) -> None:
         if self.roi is not None:
+            if self._resume_analyze:
+                # 경고를 보고도 Esc → 이 영역 그대로 분석(가격축 확인 건너뜀)
+                self._resume_analyze = False
+                self._axis_skip_roi = QRect(self.roi)
             self.overlay.show()
         else:
             self.tray.showMessage("TradeVision HUD", "영역이 지정되지 않았습니다. 트레이 메뉴에서 다시 지정하세요.")
+
+    _AXIS_HELP = "선택한 영역에서 오른쪽 가격축 숫자를 찾지 못했습니다. 가격축 숫자가 끝까지 다 보이게 조금 더 넓게 드래그하세요."
+
+    def _axis_visible(self, img: QImage) -> bool:
+        """가격축 숫자를 읽을 수 있는지(OCR을 못 쓰는 환경이면 확인 생략 → True)."""
+        if self.demo or not axis_ocr.available():
+            return True
+        try:
+            return axis_ocr.AxisTracker.locate(img) is not None
+        except Exception:  # noqa: BLE001
+            return True
 
     # -- API 키 --------------------------------------------------------------- #
     def ask_key(self) -> bool:
@@ -337,6 +368,15 @@ class Controller(QObject):
         if img is None:
             self.overlay.set_state("error", "화면 캡처에 실패했습니다.")
             return
+        # AI에 보내기 전에 가격축이 보이는지 확인 → 잘렸으면 API를 쓰지 않고 영역부터 다시 지정
+        if self._axis_skip_roi != self.roi and not self._axis_visible(img):
+            if trigger == "manual":
+                self._resume_analyze = True
+                key = str(self.cfg["hotkeys"].get("analyze") or "").upper()
+                self.select_roi(self._AXIS_HELP + f"\n(지금 영역 그대로 분석하려면 Esc 후 {key})")
+            else:
+                self.overlay.set_state("error", self._AXIS_HELP)
+            return
         sig = signature(img)
         plan = self.overlay.plan
         if trigger == "auto" and plan is not None and self.baseline is not None:
@@ -371,18 +411,29 @@ class Controller(QObject):
         self.tracker = None
         if self.demo or img.isNull() or not self.cfg.get("track_zoom", True) or not axis_ocr.available():
             return
-        ref = plan.current or (plan.levels[0]["price"] if plan.levels else 0.0)
         try:
-            tracker = axis_ocr.AxisTracker.locate(img, ref)
+            tracker = axis_ocr.AxisTracker.locate(img)
             fit = tracker.fit(img) if tracker else None
         except Exception:  # noqa: BLE001 - OCR 실패는 기능 저하일 뿐
-            return
+            tracker, fit = None, None
         if fit is None:
+            # 가장 흔한 원인: 창 크기·배치가 바뀌어 영역 오른쪽이 가격축 숫자를 자름
+            key = str(self.cfg["hotkeys"].get("select_roi") or "").upper()
+            plan.warnings.insert(0, f"가격축 숫자를 읽지 못함(영역이 축을 자른 듯) → {key} 로 가격축 전체가 보이게 "
+                                    "영역을 다시 지정하세요. 이번 결과의 가격은 틀릴 수 있고, 줌 추적도 꺼집니다.")
             return
         self.tracker = tracker
         plan.axis = fit          # AI가 읽은 축보다 직접 측정한 값이 정확하다
         plan.axis_source = "OCR"
         plan.warnings = [w for w in plan.warnings if not w.startswith("가격축")]
+        # AI가 읽은 현재가가 실제 가격축 범위와 동떨어지면 결과 전체를 믿기 어렵다
+        top, bottom = fit.price_at(0.0), fit.price_at(1.0)
+        if plan.current > 0 and top and bottom:
+            lo, hi = min(top, bottom), max(top, bottom)
+            span = hi - lo
+            if not (lo - span * 0.5 <= plan.current <= hi + span * 0.5):
+                plan.warnings.insert(0, f"AI가 읽은 현재가 {plan.current:,.0f} 가 화면 가격축({lo:,.0f}~{hi:,.0f})과 "
+                                        "맞지 않음 → 이번 분석은 신뢰하기 어렵습니다. 다시 분석하세요.")
 
     def _on_failed(self, message: str, auth: bool = False) -> None:
         self.overlay.set_state("error", message)
