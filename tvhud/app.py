@@ -23,6 +23,7 @@ from .rules import Plan, build_plan
 
 SIG_W, SIG_H = 96, 54
 AUTO_CHOICES = [(60, "1분"), (180, "3분"), (300, "5분"), (900, "15분"), (3600, "60분")]
+CORNER_CHOICES = [("bottom-left", "왼쪽 아래"), ("top-left", "왼쪽 위"), ("top-right", "오른쪽 위"), ("bottom-right", "오른쪽 아래")]
 
 
 # --------------------------------------------------------------------------- #
@@ -190,6 +191,16 @@ class Controller(QObject):
             act.triggered.connect(lambda _=False, s=sec: self._set_interval(s))
             group.addAction(act)
             sub.addAction(act)
+
+        corner_menu = menu.addMenu("요약 패널 위치")
+        corner_group = QActionGroup(corner_menu)
+        now_corner = str(self.cfg.get("hud_corner") or "bottom-left")
+        for key, name in CORNER_CHOICES:
+            act = QAction(name, corner_menu, checkable=True)
+            act.setChecked(key == now_corner)
+            act.triggered.connect(lambda _=False, k=key: self._set_corner(k))
+            corner_group.addAction(act)
+            corner_menu.addAction(act)
 
         menu.addSeparator()
         add("차트 영역 다시 지정", self.select_roi, hk["select_roi"])
@@ -493,6 +504,11 @@ class Controller(QObject):
         self._refresh_hints()
         if self.auto_on:
             self.analyze("manual")
+
+    def _set_corner(self, corner: str) -> None:
+        self.cfg["hud_corner"] = corner
+        config.save(self.cfg)
+        self.overlay.update()
 
     def _set_interval(self, sec: int) -> None:
         self.cfg["auto_interval_sec"] = sec

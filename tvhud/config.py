@@ -49,7 +49,7 @@ DEFAULTS: dict = {
     "change_threshold": 0.06,
     # 분석 후 이 시간이 지나면 '오래된 분석'으로 표시(초)
     "stale_after_sec": 300,
-    "hud_corner": "top-left",    # top-left | top-right | bottom-left | bottom-right
+    "hud_corner": "bottom-left", # 요약 패널 위치: top-left | top-right | bottom-left | bottom-right
     "max_image_width": 1600,
     "save_logs": True,
     "log_keep_days": 14,
